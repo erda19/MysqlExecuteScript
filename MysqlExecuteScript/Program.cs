@@ -1,5 +1,6 @@
 ﻿using MySql.Data.MySqlClient;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -12,15 +13,14 @@ namespace MysqlExecuteScript
 {
     class Program
     {
+        private static string connectionString;
         static void Main(string[] args)
         {
 
             try
             {
-                string constring =  System.Configuration.ConfigurationManager.AppSettings["DatabaseConnection"];
+                connectionString = System.Configuration.ConfigurationManager.AppSettings["DatabaseConnection"];
                 string sqlFileDirectory = System.Configuration.ConfigurationManager.AppSettings["SqlFileDirectory"];
-                MySqlConnection connection = new MySqlConnection(constring);
-                connection.Open();
 
                 if(string.IsNullOrEmpty(sqlFileDirectory.Trim()))
                 {
@@ -42,7 +42,7 @@ namespace MysqlExecuteScript
                 Console.CursorSize = 25;
                 if (myFiles.Count() > 0)
                 {
-                    bool isFileExecuted = false;
+                    int totalFileExecuted = 0;
                     Console.WriteLine("List Of sql files:");
                     int indexFile =  1;
                     foreach (var filename in myFiles)
@@ -59,52 +59,69 @@ namespace MysqlExecuteScript
 
                     string executeMode = Convert.ToString(Console.ReadLine());
 
+                    ParallelOptions parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = 5 };
+
                     if (executeMode.ToLower().Trim() == "a")
                     {
-                        foreach (var file in myFiles)
-                        {
-                            var task = Task.Run(() => ExecuteScript(connection, file));
-                            Console.CursorVisible = false;
-                            task.Wait();
-                            isFileExecuted = true;
-                        }
+                        var taskParallel = Task.Run(() =>
+
+                            Parallel.ForEach(myFiles, parallelOptions,
+                                 file =>
+                            {
+                                ExecuteScript(file);
+                                Console.CursorVisible = false;
+                                totalFileExecuted++;
+                            })
+                        );
+                        taskParallel.Wait();
+
                     }
                     else
                     {
                         int indexFileExecute = 1;
                         string[] numberOfFile = executeMode.Split(',');
-                        foreach (var file in myFiles)
-                        {
-                            if (numberOfFile.Contains(indexFileExecute.ToString()))
-                            {
-                                var task = Task.Run(() => ExecuteScript(connection, file));
-                                Console.CursorVisible = false;
-                                task.Wait();
-                                isFileExecuted = true;
-                            }
-                            indexFileExecute++;
-                        }
+                        var taskParallel = 
+                            Task.Run(() =>
+                                    Parallel.ForEach(myFiles
+                                                , parallelOptions
+                                                , file =>
+                                                 {
+                                                     if (numberOfFile.Contains(indexFileExecute.ToString()))
+                                                     {
+                                                         ExecuteScript(file);
+                                                         Console.CursorVisible = false;
+                                                         totalFileExecuted++;
+                                                     }
+                                                     indexFileExecute++;
+                                                 })
+                                            );
+                        taskParallel.Wait();
 
                     }
 
-                    if(!isFileExecuted)
+                    if(totalFileExecuted == 0)
                     {
-                        Console.WriteLine("no file that was executed!");
+                        Console.WriteLine("No file that was executed!");
+                    }
+                    else if (totalFileExecuted > 1)
+                    {
+                        Console.WriteLine("Success execute all files!");
                     }
 
                 }
                 else
                 {
-                    Console.WriteLine("sql file not found");
+                    Console.WriteLine("Sql file not found");
                 }
-                connection.Close();
+
                 Console.CursorVisible = true;
                 while (Console.KeyAvailable)
                 {
                     Console.ReadKey(false);
                 }
-                Console.WriteLine("press any key  to close");
+                Console.WriteLine("Press any key  to close");
                 Console.ReadKey();
+
             }
             catch (Exception e)
             {
@@ -115,43 +132,59 @@ namespace MysqlExecuteScript
         }
 
 
-        private static async Task ExecuteScript(MySqlConnection connection, string file)
+        private static void ExecuteScript(string file)
         {
-            Stopwatch timer = new Stopwatch();
-            timer.Start();
-            FileInfo dataFile = new FileInfo(file);
-            Console.WriteLine("start execute file : " + dataFile.Name);
-            string text = await dataFile.OpenText().ReadToEndAsync();
-            if (!Regex.IsMatch(text, @"\b(?i)USE\b"))
+            MySqlConnection connection = new MySqlConnection(connectionString);
+            string fileName = "";
+            try
             {
-                Console.WriteLine("Error when execute : " + dataFile.Name);
-                Console.WriteLine("No database selected! ");
-            }
-
-            string cleanText = Regex.Replace(text, @"(DEFINER=)(\S+)", "");
-            MySqlScript script = new MySqlScript(connection, cleanText);
-            var execute = script.ExecuteAsync();
-            timer.Stop();
-            if (execute.Exception != null)
-            {
-                Console.WriteLine("Error when execute : " + dataFile.Name);
-                Console.WriteLine(execute.Exception.ToString());
-            }
-            else
-            {
-                double spendTime = Convert.ToDouble(timer.ElapsedMilliseconds) / 1000;
-                string spendUnit = "seconds";
-                if(spendTime >= 60)
+                connection.Open();
+                Stopwatch timer = new Stopwatch();
+                timer.Start();
+                FileInfo dataFile = new FileInfo(file);
+                fileName = dataFile.Name;
+                Console.WriteLine("start execute file : " + fileName);
+                string text = dataFile.OpenText().ReadToEnd();
+                if (!Regex.IsMatch(text, @"\b(?i)USE\b"))
                 {
-                    spendTime = spendTime / 60 ;
-                    spendUnit = "minutes";
+                    Console.WriteLine("Error when execute : " + fileName);
+                    Console.WriteLine("No database selected! ");
                 }
 
-                Console.WriteLine("Success execute file " + dataFile.Name + " on "+ spendTime.ToString() + " " + spendUnit);
-            }
+                string cleanText = Regex.Replace(text, @"(DEFINER=)(\S+)", "");
+                MySqlScript script = new MySqlScript(connection, cleanText);
+                var execute = script.ExecuteAsync();
+                timer.Stop();
+                if (execute.Exception != null)
+                {
+                    Console.WriteLine("Error when execute : " + fileName);
+                    Console.WriteLine(execute.Exception.ToString());
+                }
+                else
+                {
+                    double spendTime = Convert.ToDouble(timer.ElapsedMilliseconds) / 1000;
+                    string spendUnit = "seconds";
+                    if (spendTime >= 60)
+                    {
+                        spendTime = spendTime / 60;
+                        spendUnit = "minutes";
+                    }
 
-            script.Query = "USE information_schema;";
-            script.Execute();
+                    Console.WriteLine("Success execute file " + fileName + " on " + spendTime.ToString() + " " + spendUnit);
+                }
+
+                script.Query = "USE information_schema;";
+                script.Execute();
+            }
+            catch(Exception e)
+            {
+                Console.WriteLine("Error when execute : " + fileName);
+                Console.WriteLine(e.ToString());
+            }
+            finally
+            {
+                connection.Close();
+            }
         }
 
 

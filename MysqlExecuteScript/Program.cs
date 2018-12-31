@@ -14,6 +14,7 @@ namespace MysqlExecuteScript
     class Program
     {
         private static string connectionString;
+        private static int cursorTop; 
         static void Main(string[] args)
         {
 
@@ -38,6 +39,9 @@ namespace MysqlExecuteScript
                 var ext = new List<string> {".sql"};
                 var myFiles = Directory.GetFiles(sqlFileDirectory, "*.*", SearchOption.AllDirectories)
                      .Where(s => ext.Contains(Path.GetExtension(s)));
+
+                var arrayFile = myFiles.ToArray();
+
                 Console.CursorVisible = true;
                 Console.CursorSize = 25;
                 if (myFiles.Count() > 0)
@@ -45,7 +49,7 @@ namespace MysqlExecuteScript
                     int totalFileExecuted = 0;
                     Console.WriteLine("List Of sql files:");
                     int indexFile =  1;
-                    foreach (var filename in myFiles)
+                    foreach (var filename in arrayFile)
                     {
                         FileInfo dataFile = new FileInfo(filename);
                         Console.WriteLine(indexFile + ". " + dataFile.Name);
@@ -65,11 +69,10 @@ namespace MysqlExecuteScript
                     {
                         var taskParallel = Task.Run(() =>
 
-                            Parallel.ForEach(myFiles, parallelOptions,
+                            Parallel.ForEach(arrayFile, parallelOptions,
                                  file =>
                             {
                                 ExecuteScript(file);
-                                Console.CursorVisible = false;
                                 totalFileExecuted++;
                             })
                         );
@@ -78,28 +81,25 @@ namespace MysqlExecuteScript
                     }
                     else
                     {
-                        int indexFileExecute = 1;
-                        string[] numberOfFile = executeMode.Split(',');
+                        //int indexFileExecute = 1;
+                        string[] arrayFileNumber = executeMode.Split(',');
                         var taskParallel = 
                             Task.Run(() =>
-                                    Parallel.ForEach(myFiles
-                                                , parallelOptions
-                                                , file =>
-                                                 {
-                                                     if (numberOfFile.Contains(indexFileExecute.ToString()))
-                                                     {
-                                                         ExecuteScript(file);
-                                                         Console.CursorVisible = false;
-                                                         totalFileExecuted++;
-                                                     }
-                                                     indexFileExecute++;
-                                                 })
-                                            );
+                            Parallel.ForEach(arrayFile
+                                        , parallelOptions
+                                        , (file, state, index) =>
+                                        {
+                                            if(arrayFileNumber.Contains((index + 1).ToString()))
+                                            {
+                                                ExecuteScript(file);
+                                            }
+                                        })
+                                    );
                         taskParallel.Wait();
 
                     }
-
-                    if(totalFileExecuted == 0)
+                    Console.SetCursorPosition(0, Console.CursorTop);
+                    if (totalFileExecuted == 0)
                     {
                         Console.WriteLine("No file that was executed!");
                     }
@@ -143,7 +143,10 @@ namespace MysqlExecuteScript
                 timer.Start();
                 FileInfo dataFile = new FileInfo(file);
                 fileName = dataFile.Name;
-                Console.WriteLine("start execute file : " + fileName);
+                string messageExecuteFile = "Execute file " + fileName;
+                //int cursorTop = Console.CursorTop;
+                //Console.SetCursorPosition(0, cursorTop + 1);
+                Console.WriteLine(messageExecuteFile);
                 string text = dataFile.OpenText().ReadToEnd();
                 if (!Regex.IsMatch(text, @"\b(?i)USE\b"))
                 {
@@ -153,7 +156,11 @@ namespace MysqlExecuteScript
 
                 string cleanText = Regex.Replace(text, @"(DEFINER=)(\S+)", "");
                 MySqlScript script = new MySqlScript(connection, cleanText);
+
+                //script.StatementExecuted += new MySqlStatementExecutedEventHandler(script_StatementExecuted);
+
                 var execute = script.ExecuteAsync();
+
                 timer.Stop();
                 if (execute.Exception != null)
                 {
@@ -171,6 +178,8 @@ namespace MysqlExecuteScript
                     }
 
                     Console.WriteLine("Success execute file " + fileName + " on " + spendTime.ToString() + " " + spendUnit);
+                    //Console.CursorLeft = 2;
+                    //Console.WriteLine(messageExecuteFile + " [Done] Elapsed Time " + spendTime.ToString() + " " + spendUnit);
                 }
 
                 script.Query = "USE information_schema;";
@@ -185,6 +194,11 @@ namespace MysqlExecuteScript
             {
                 connection.Close();
             }
+        }
+
+        private static void script_StatementExecuted(object sender, MySqlScriptEventArgs args)
+        {
+            Console.WriteLine(args.StatementText);
         }
 
 

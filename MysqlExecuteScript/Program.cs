@@ -92,6 +92,7 @@ namespace MysqlExecuteScript
                                             if(arrayFileNumber.Contains((index + 1).ToString()))
                                             {
                                                 ExecuteScript(file);
+                                                totalFileExecuted++;
                                             }
                                         })
                                     );
